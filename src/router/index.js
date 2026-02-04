@@ -3,11 +3,16 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   {
     path: '/',
+    name: 'Home',
+    component: () => import('../App.vue')
+  },
+  {
+    path: '/screenshot',
     name: 'Screenshot',
     component: () => import('../components/Screenshot.vue')
   },
   {
-    path: '/pinboard',
+    path: '/pin',
     name: 'PinBoard',
     component: () => import('../components/PinBoard.vue')
   },

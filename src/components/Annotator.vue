@@ -1,335 +1,825 @@
 <template>
-  <div class="annotator">
-    <h2>✏️ 图片标注</h2>
+  <div class="annotator-container">
+    <div class="page-header">
+      <h1>✏️ 图片标注</h1>
+      <p>在图片上添加标注：绘图、高亮、马赛克、箭头</p>
+    </div>
     
-    <div class="toolbar">
-      <div class="tool-group">
-        <button @click="setTool('select')" :class="{ active: tool === 'select' }">🖱️ 选择</button>
-        <button @click="setTool('draw')" :class="{ active: tool === 'draw' }">✏️ 画笔</button>
-        <button @click="setTool('highlight')" :class="{ active: tool === 'highlight' }">🖍️ 高亮</button>
-        <button @click="setTool('arrow')" :class="{ active: tool === 'arrow' }">➡️ 箭头</button>
-        <button @click="setTool('rect')" :class="{ active: tool === 'rect' }">⬜ 矩形</button>
-        <button @click="setTool('circle')" :class="{ active: tool === 'circle' }">⭕ 圆形</button>
-        <button @click="setTool('text')" :class="{ active: tool === 'text' }">🔤 文字</button>
-        <button @click="setTool('mosaic')" :class="{ active: tool === 'mosaic' }">🔲 马赛克</button>
-        <button @click="setTool('blur')" :class="{ active: tool === 'blur' }">🌫️ 模糊</button>
+    <div class="annotator-content">
+      <div class="toolbar-section">
+        <div class="tool-group">
+          <span class="tool-group-label">工具</span>
+          <div class="tool-buttons">
+            <button 
+              v-for="tool in tools" 
+              :key="tool.id"
+              :class="['tool-btn', { active: currentTool === tool.id }]"
+              @click="currentTool = tool.id"
+              :title="tool.name"
+            >
+              <span class="tool-icon">{{ tool.icon }}</span>
+              <span class="tool-name">{{ tool.name }}</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="tool-group" v-if="currentTool === 'draw' || currentTool === 'highlight'">
+          <span class="tool-group-label">颜色</span>
+          <div class="color-picker">
+            <button 
+              v-for="color in colors" 
+              :key="color"
+              :class="['color-btn', { active: selectedColor === color }]"
+              :style="{ background: color }"
+              @click="selectedColor = color"
+            ></button>
+          </div>
+        </div>
+        
+        <div class="tool-group" v-if="currentTool === 'draw' || currentTool === 'arrow'">
+          <span class="tool-group-label">线宽</span>
+          <input 
+            type="range" 
+            v-model="strokeWidth" 
+            min="1" 
+            max="20" 
+            class="width-slider"
+          />
+          <span class="width-value">{{ strokeWidth }}px</span>
+        </div>
+        
+        <div class="tool-group" v-if="currentTool === 'mosaic'">
+          <span class="tool-group-label">马赛克强度</span>
+          <input 
+            type="range" 
+            v-model="mosaicIntensity" 
+            min="5" 
+            max="30" 
+            class="width-slider"
+          />
+          <span class="width-value">{{ mosaicIntensity }}px</span>
+        </div>
+        
+        <div class="tool-actions">
+          <button class="btn btn-secondary" @click="undo" :disabled="history.length === 0">
+            ↩️ 撤销
+          </button>
+          <button class="btn btn-secondary" @click="redo" :disabled="redoHistory.length === 0">
+            ↪️ 重做
+          </button>
+          <button class="btn btn-secondary" @click="clearCanvas">
+            🗑️ 清除
+          </button>
+        </div>
       </div>
-      <div class="tool-group">
-        <label>
-          颜色:
-          <input type="color" v-model="color" />
-        </label>
-        <label>
-          粗细:
-          <input type="range" v-model="strokeWidth" min="1" max="20" />
-        </label>
+      
+      <div class="canvas-section">
+        <div class="canvas-wrapper" ref="canvasWrapperRef">
+          <canvas 
+            ref="canvasRef"
+            @mousedown="startDrawing"
+            @mousemove="draw"
+            @mouseup="stopDrawing"
+            @mouseleave="stopDrawing"
+            @touchstart.prevent="startDrawingTouch"
+            @touchmove.prevent="drawTouch"
+            @touchend.prevent="stopDrawing"
+          ></canvas>
+          <canvas 
+            ref="tempCanvasRef"
+            class="temp-canvas"
+            @mousedown="startDrawing"
+            @mousemove="draw"
+            @mouseup="stopDrawing"
+            @mouseleave="stopDrawing"
+          ></canvas>
+        </div>
+        
+        <div class="canvas-actions">
+          <button class="btn btn-primary" @click="uploadImage">
+            📁 上传图片
+          </button>
+          <button class="btn btn-secondary" @click="saveAnnotation">
+            💾 保存标注
+          </button>
+          <button class="btn btn-secondary" @click="resetImage">
+            🔄 重新开始
+          </button>
+        </div>
+        <input 
+          type="file" 
+          ref="fileInputRef"
+          accept="image/*" 
+          @change="handleFileSelect"
+          hidden
+        />
       </div>
-      <div class="tool-group">
-        <button @click="undo" :disabled="history.length === 0">↩️ 撤销</button>
-        <button @click="redo" :disabled="redoStack.length === 0">↪️ 重做</button>
-        <button @click="clear" class="danger">🗑️ 清除</button>
+      
+      <div class="layers-section">
+        <div class="layers-header">
+          <h3>📋 图层</h3>
+          <button class="btn btn-secondary btn-sm" @click="clearAllLayers">
+            清除全部
+          </button>
+        </div>
+        <div class="layers-list">
+          <div 
+            v-for="(layer, index) in layers" 
+            :key="layer.id"
+            :class="['layer-item', { visible: !layer.hidden }]"
+            @click="toggleLayer(layer)"
+          >
+            <span class="layer-icon">{{ getLayerIcon(layer.type) }}</span>
+            <span class="layer-name">{{ layer.name }}</span>
+            <button class="layer-delete" @click.stop="deleteLayer(layer)">×</button>
+          </div>
+          <div v-if="layers.length === 0" class="empty-layers">
+            <p>还没有标注</p>
+          </div>
+        </div>
       </div>
-      <div class="tool-group">
-        <button @click="download">💾 下载</button>
-        <button @click="copy">📋 复制</button>
-      </div>
-    </div>
-
-    <div v-if="!image" class="upload-area" @drop.prevent="handleDrop" @dragover.prevent>
-      <div class="placeholder">
-        <p>📋 拖拽图片到这里开始标注</p>
-        <p class="hint">或点击上传</p>
-        <label class="upload-btn">
-          📁 选择图片
-          <input type="file" accept="image/*" @change="uploadImage" hidden />
-        </label>
-      </div>
-    </div>
-
-    <div v-else class="canvas-workspace" ref="workspace">
-      <canvas 
-        ref="canvasRef"
-        @mousedown="startDrawing"
-        @mousemove="draw"
-        @mouseup="stopDrawing"
-        @mouseleave="stopDrawing"
-      ></canvas>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 
-const tool = ref('select')
-const color = ref('#ff0000')
-const strokeWidth = ref(3)
-const image = ref(null)
+const route = useRoute()
 const canvasRef = ref(null)
-const workspace = ref(null)
+const tempCanvasRef = ref(null)
+const canvasWrapperRef = ref(null)
+const fileInputRef = ref(null)
+
+const currentTool = ref('draw')
+const selectedColor = ref('#e94560')
+const strokeWidth = ref(3)
+const mosaicIntensity = ref(15)
 const isDrawing = ref(false)
+const currentPath = ref([])
+const baseImage = ref(null)
+const layers = ref([])
 const history = ref([])
-const redoStack = ref([])
+const redoHistory = ref([])
+
+const tools = [
+  { id: 'draw', name: '画笔', icon: '✏️' },
+  { id: 'highlight', name: '高亮', icon: '🖍️' },
+  { id: 'arrow', name: '箭头', icon: '➡️' },
+  { id: 'rect', name: '矩形', icon: '⬜' },
+  { id: 'circle', name: '圆形', icon: '⭕' },
+  { id: 'mosaic', name: '马赛克', icon: '🔲' },
+  { id: 'text', name: '文字', icon: '📝' }
+]
+
+const colors = [
+  '#e94560',
+  '#4ecdc4',
+  '#ffe66d',
+  '#95e1d3',
+  '#f38181',
+  '#aa96da',
+  '#fcbad3',
+  '#ffffff'
+]
+
 let ctx = null
-let startX = 0
-let startY = 0
-let snapshot = null
+let tempCtx = null
+let baseCtx = null
 
-const pendingImage = localStorage.getItem('pendingImage')
-
-const usePending = () => {
-  if (pendingImage) {
-    image.value = pendingImage
-    localStorage.removeItem('pendingImage')
-    initCanvas()
+const initCanvases = () => {
+  if (!canvasRef.value || !tempCanvasRef.value) return
+  
+  ctx = canvasRef.value.getContext('2d')
+  tempCtx = tempCanvasRef.value.getContext('2d')
+  
+  if (baseImage.value) {
+    setupCanvasSize()
   }
 }
 
-const uploadImage = (e) => {
-  const file = e.target.files[0]
-  if (file) {
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const img = new Image()
-      img.onload = () => {
-        image.value = ev.target.result
-        initCanvas()
-      }
-      img.src = ev.target.result
-    }
-    reader.readAsDataURL(file)
+const setupCanvasSize = () => {
+  const img = baseImage.value
+  const maxWidth = 900
+  const maxHeight = 600
+  
+  let width = img.width
+  let height = img.height
+  
+  if (width > maxWidth) {
+    height = (maxWidth / width) * height
+    width = maxWidth
+  }
+  if (height > maxHeight) {
+    width = (maxHeight / height) * width
+    height = maxHeight
+  }
+  
+  canvasRef.value.width = width
+  canvasRef.value.height = height
+  canvasRef.value.style.width = width + 'px'
+  canvasRef.value.style.height = height + 'px'
+  
+  tempCanvasRef.value.width = width
+  tempCanvasRef.value.height = height
+  tempCanvasRef.value.style.width = width + 'px'
+  tempCanvasRef.value.style.height = height + 'px'
+  
+  if (ctx && baseCtx) {
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(baseCtx.canvas, 0, 0, width, height)
   }
 }
 
-const handleDrop = (e) => {
-  const file = e.dataTransfer.files[0]
-  if (file && file.type.startsWith('image/')) {
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const img = new Image()
-      img.onload = () => {
-        image.value = ev.target.result
-        initCanvas()
-      }
-      img.src = ev.target.result
-    }
-    reader.readAsDataURL(file)
-  }
-}
-
-const initCanvas = () => {
+const loadBaseImage = (src) => {
   const img = new Image()
+  img.crossOrigin = 'anonymous'
   img.onload = () => {
-    const canvas = canvasRef.value
-    canvas.width = img.width
-    canvas.height = img.height
-    ctx = canvas.getContext('2d')
-    ctx.drawImage(img, 0, 0)
-    saveState()
+    baseImage.value = img
+    
+    // 创建基础画布
+    const baseCanvas = document.createElement('canvas')
+    baseCanvas.width = img.width
+    baseCanvas.height = img.height
+    baseCtx = baseCanvas.getContext('2d')
+    baseCtx.drawImage(img, 0, 0)
+    
+    nextTick(() => {
+      initCanvases()
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvasRef.value.width, canvasRef.value.height)
+      }
+    })
   }
-  img.src = image.value
+  img.src = src
 }
 
-const setTool = (t) => { tool.value = t }
+const startDrawing = (e) => {
+  if (!baseImage.value) return
+  
+  isDrawing.value = true
+  const rect = canvasRef.value.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  
+  currentPath.value = [{ x, y }]
+  
+  tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+  
+  if (currentTool.value === 'arrow') {
+    drawArrow(x, y, x, y)
+  } else if (currentTool.value === 'rect') {
+    drawRect(x, y, 0, 0)
+  } else if (currentTool.value === 'circle') {
+    drawCircle(x, y, 0)
+  }
+}
 
-const saveState = () => {
-  const canvas = canvasRef.value
-  history.value.push(canvas.toDataURL())
-  if (history.value.length > 20) history.value.shift()
-  redoStack.value = []
+const draw = (e) => {
+  if (!isDrawing.value) return
+  
+  const rect = canvasRef.value.getBoundingClientRect()
+  const x = e.clientX - rect.left
+  const y = e.clientY - rect.top
+  
+  if (currentTool.value === 'draw' || currentTool.value === 'highlight' || currentTool.value === 'mosaic') {
+    currentPath.value.push({ x, y })
+    
+    if (currentTool.value === 'mosaic') {
+      applyMosaic(x, y)
+    } else {
+      drawPath()
+    }
+  } else if (currentTool.value === 'arrow') {
+    tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+    const start = currentPath.value[0]
+    drawArrow(start.x, start.y, x, y)
+  } else if (currentTool.value === 'rect') {
+    tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+    const start = currentPath.value[0]
+    drawRect(start.x, start.y, x - start.x, y - start.y)
+  } else if (currentTool.value === 'circle') {
+    tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+    const start = currentPath.value[0]
+    const radius = Math.sqrt(Math.pow(x - start.x, 2) + Math.pow(y - start.y, 2))
+    drawCircle(start.x, start.y, radius)
+  }
+}
+
+const stopDrawing = () => {
+  if (!isDrawing.value) return
+  
+  isDrawing.value = false
+  
+  // 将临时画布的内容合并到主画布
+  ctx.drawImage(tempCanvasRef.value, 0, 0)
+  tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+  
+  // 保存当前状态到历史
+  if (currentPath.value.length > 1 || currentTool.value !== 'draw') {
+    saveToHistory()
+  }
+  
+  currentPath.value = []
+}
+
+// 触摸事件支持
+const startDrawingTouch = (e) => {
+  const touch = e.touches[0]
+  const mouseEvent = new MouseEvent('mousedown', {
+    clientX: touch.clientX,
+    clientY: touch.clientY
+  })
+  startDrawing(mouseEvent)
+}
+
+const drawTouch = (e) => {
+  const touch = e.touches[0]
+  const mouseEvent = new MouseEvent('mousemove', {
+    clientX: touch.clientX,
+    clientY: touch.clientY
+  })
+  draw(mouseEvent)
+}
+
+const drawPath = () => {
+  if (currentPath.value.length < 2) return
+  
+  tempCtx.clearRect(0, 0, tempCanvasRef.value.width, tempCanvasRef.value.height)
+  tempCtx.beginPath()
+  tempCtx.moveTo(currentPath.value[0].x, currentPath.value[0].y)
+  
+  for (let i = 1; i < currentPath.value.length; i++) {
+    const point = currentPath.value[i]
+    
+    if (currentTool.value === 'highlight') {
+      tempCtx.strokeStyle = selectedColor.value + '40'
+      tempCtx.lineWidth = strokeWidth.value * 3
+      tempCtx.globalAlpha = 0.4
+    } else {
+      tempCtx.strokeStyle = selectedColor.value
+      tempCtx.lineWidth = strokeWidth.value
+      tempCtx.globalAlpha = 1
+    }
+    
+    tempCtx.lineTo(point.x, point.y)
+    tempCtx.stroke()
+    tempCtx.beginPath()
+    tempCtx.moveTo(point.x, point.y)
+  }
+}
+
+const drawArrow = (fromX, fromY, toX, toY) => {
+  const headLength = 15
+  const angle = Math.atan2(toY - fromY, toX - fromX)
+  
+  tempCtx.strokeStyle = selectedColor.value
+  tempCtx.fillStyle = selectedColor.value
+  tempCtx.lineWidth = strokeWidth.value
+  
+  // 主线
+  tempCtx.beginPath()
+  tempCtx.moveTo(fromX, fromY)
+  tempCtx.lineTo(toX, toY)
+  tempCtx.stroke()
+  
+  // 箭头
+  tempCtx.beginPath()
+  tempCtx.moveTo(toX, toY)
+  tempCtx.lineTo(
+    toX - headLength * Math.cos(angle - Math.PI / 6),
+    toY - headLength * Math.sin(angle - Math.PI / 6)
+  )
+  tempCtx.lineTo(
+    toX - headLength * Math.cos(angle + Math.PI / 6),
+    toY - headLength * Math.sin(angle + Math.PI / 6)
+  )
+  tempCtx.closePath()
+  tempCtx.fill()
+}
+
+const drawRect = (x, y, width, height) => {
+  tempCtx.strokeStyle = selectedColor.value
+  tempCtx.lineWidth = strokeWidth.value
+  tempCtx.strokeRect(x, y, width, height)
+}
+
+const drawCircle = (x, y, radius) => {
+  tempCtx.strokeStyle = selectedColor.value
+  tempCtx.lineWidth = strokeWidth.value
+  tempCtx.beginPath()
+  tempCtx.arc(x, y, radius, 0, Math.PI * 2)
+  tempCtx.stroke()
+}
+
+const applyMosaic = (x, y) => {
+  const size = mosaicIntensity.value
+  const imageData = ctx.getImageData(
+    Math.max(0, x - size / 2),
+    Math.max(0, y - size / 2),
+    size,
+    size
+  )
+  
+  // 简单的马赛克效果
+  for (let i = 0; i < imageData.data.length; i += 4 * size) {
+    const r = imageData.data[i]
+    const g = imageData.data[i + 1]
+    const b = imageData.data[i + 2]
+    
+    for (let j = 0; j < 4 * size && i + j < imageData.data.length; j += 4) {
+      imageData.data[i + j] = r
+      imageData.data[i + j + 1] = g
+      imageData.data[i + j + 2] = b
+    }
+  }
+  
+  ctx.putImageData(imageData, Math.max(0, x - size / 2), Math.max(0, y - size / 2))
+}
+
+const saveToHistory = () => {
+  history.value.push(canvasRef.value.toDataURL())
+  if (history.value.length > 20) {
+    history.value.shift()
+  }
+  redoHistory.value = []
 }
 
 const undo = () => {
-  if (history.value.length > 1) {
-    redoStack.value.push(history.value.pop())
-    restoreState(history.value[history.value.length - 1])
-  }
-}
-
-const redo = () => {
-  if (redoStack.value.length > 0) {
-    const state = redoStack.value.pop()
-    history.value.push(state)
-    restoreState(state)
-  }
-}
-
-const restoreState = (dataUrl) => {
+  if (history.value.length === 0) return
+  
+  redoHistory.value.push(canvasRef.value.toDataURL())
+  const lastState = history.value.pop()
+  
   const img = new Image()
   img.onload = () => {
     ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
     ctx.drawImage(img, 0, 0)
   }
-  img.src = dataUrl
+  img.src = lastState
 }
 
-const clear = () => {
-  if (confirm('清除所有标注?')) {
-    initCanvas()
-  }
-}
-
-const startDrawing = (e) => {
-  if (!image.value) return
-  isDrawing.value = true
-  const rect = canvasRef.value.getBoundingClientRect()
-  startX = e.clientX - rect.left
-  startY = e.clientY - rect.top
-  snapshot = canvasRef.value.toDataURL()
-}
-
-const draw = (e) => {
-  if (!isDrawing.value.value) return
+const redo = () => {
+  if (redoHistory.value.length === 0) return
   
-  const rect = canvasRef.value.getBoundingClientRect()
-  const x = e.clientX - rect.left
-  const y = e.clientY - rect.top
-  const w = x - startX
-  const h = y - startY
+  history.value.push(canvasRef.value.toDataURL())
+  const nextState = redoHistory.value.pop()
   
-  // Restore snapshot for preview
-  ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
   const img = new Image()
   img.onload = () => {
+    ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
     ctx.drawImage(img, 0, 0)
-    drawShape(x, y, w, h)
   }
-  img.src = snapshot
+  img.src = nextState
 }
 
-const stopDrawing = () => {
-  if (isDrawing.value) {
-    isDrawing.value = false
-    saveState()
-  }
-}
-
-const drawShape = (x, y, w, h) => {
-  ctx.strokeStyle = color.value
-  ctx.fillStyle = color.value + '40'
-  ctx.lineWidth = strokeWidth.value
-  
-  if (tool.value === 'arrow') {
-    drawArrow(ctx, startX, startY, x, y)
-  } else if (tool.value === 'rect') {
-    ctx.strokeRect(startX, startY, w, h)
-  } else if (tool.value === 'circle') {
-    ctx.beginPath()
-    ctx.ellipse(startX + w/2, startY + h/2, Math.abs(w/2), Math.abs(h/2), 0, 0, Math.PI * 2)
-    ctx.stroke()
-  } else if (tool.value === 'text') {
-    ctx.font = `${strokeWidth.value * 8}px sans-serif`
-    ctx.fillText('点击输入文字', startX, startY)
-  } else if (tool.value === 'mosaic') {
-    mosaicArea(startX, startY, w, h)
+const clearCanvas = () => {
+  if (confirm('确定要清除所有标注吗？')) {
+    ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+    if (baseCtx) {
+      ctx.drawImage(baseCtx.canvas, 0, 0, canvasRef.value.width, canvasRef.value.height)
+    }
+    saveToHistory()
   }
 }
 
-const drawArrow = (ctx, fromX, fromY, toX, toY) => {
-  const headlen = 15
-  const angle = Math.atan2(toY - fromY, toX - fromX)
-  ctx.beginPath()
-  ctx.moveTo(fromX, fromY)
-  ctx.lineTo(toX, toY)
-  ctx.lineTo(toX - headlen * Math.cos(angle - Math.PI / 6), toY - headlen * Math.sin(angle - Math.PI / 6))
-  ctx.moveTo(toX, toY)
-  ctx.lineTo(toX - headlen * Math.cos(angle + Math.PI / 6), toY - headlen * Math.sin(angle + Math.PI / 6))
-  ctx.stroke()
+const uploadImage = () => {
+  fileInputRef.value?.click()
 }
 
-const mosaicArea = (x, y, w, h) => {
-  const imageData = ctx.getImageData(x, y, w, h)
-  const size = 10
-  for (let py = 0; py < h; py += size) {
-    for (let px = 0; px < w; px += size) {
-      let r = 0, g = 0, b = 0, count = 0
-      for (let dy = 0; dy < size && py + dy < h; dy++) {
-        for (let dx = 0; dx < size && px + dx < w; dx++) {
-          const i = ((py + dy) * w + (px + dx)) * 4
-          r += imageData.data[i]
-          g += imageData.data[i + 1]
-          b += imageData.data[i + 2]
-          count++
-        }
-      }
-      r = Math.floor(r / count)
-      g = Math.floor(g / count)
-      b = Math.floor(b / count)
-      for (let dy = 0; dy < size && py + dy < h; dy++) {
-        for (let dx = 0; dx < size && px + dx < w; dx++) {
-          const i = ((py + dy) * w + (px + dx)) * 4
-          imageData.data[i] = r
-          imageData.data[i + 1] = g
-          imageData.data[i + 2] = b
-        }
-      }
+const handleFileSelect = (e) => {
+  const file = e.target.files[0]
+  if (file) {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      loadBaseImage(e.target.result)
+    }
+    reader.readAsDataURL(file)
+  }
+  e.target.value = ''
+}
+
+const resetImage = () => {
+  if (confirm('确定要重新开始吗？当前标注将被清除。')) {
+    layers.value = []
+    history.value = []
+    redoHistory.value = []
+    if (baseCtx) {
+      ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+      ctx.drawImage(baseCtx.canvas, 0, 0, canvasRef.value.width, canvasRef.value.height)
     }
   }
-  ctx.putImageData(imageData, x, y)
 }
 
-const download = () => {
+const saveAnnotation = () => {
   const link = document.createElement('a')
   link.download = `annotated-${Date.now()}.png`
-  link.href = canvasRef.value.toDataURL()
+  link.href = canvasRef.value.toDataURL('image/png')
   link.click()
 }
 
-const copy = async () => {
-  try {
-    const blob = await new Promise(resolve => canvasRef.value.toBlob(resolve))
-    await navigator.clipboard.write([
-      new ClipboardItem({ 'image/png': blob })
-    ])
-    alert('已复制到剪贴板!')
-  } catch (e) {
-    alert('复制失败: ' + e.message)
+const getLayerIcon = (type) => {
+  const icons = {
+    draw: '✏️',
+    highlight: '🖍️',
+    arrow: '➡️',
+    rect: '⬜',
+    circle: '⭕',
+    mosaic: '🔲',
+    text: '📝'
+  }
+  return icons[type] || '📌'
+}
+
+const toggleLayer = (layer) => {
+  layer.hidden = !layer.hidden
+}
+
+const deleteLayer = (layer) => {
+  const index = layers.value.findIndex(l => l.id === layer.id)
+  if (index !== -1) {
+    layers.value.splice(index, 1)
+  }
+}
+
+const clearAllLayers = () => {
+  if (confirm('确定要清除所有图层吗？')) {
+    layers.value = []
+    clearCanvas()
   }
 }
 
 onMounted(() => {
-  if (pendingImage) usePending()
+  if (route.query.image) {
+    loadBaseImage(route.query.image)
+  } else {
+    // 加载默认图片
+    loadBaseImage('data:image/svg+xml,' + encodeURIComponent(`
+      <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" fill="#1a1a2e"/>
+        <text x="400" y="300" font-family="Arial" font-size="24" fill="#b8b8d1" text-anchor="middle">
+          点击"上传图片"开始标注
+        </text>
+      </svg>
+    `))
+  }
 })
 </script>
 
 <style scoped>
-.annotator { padding: 20px; }
-h2 { margin-bottom: 20px; color: #f0f6fc; }
-.toolbar { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
-.tool-group { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
-.tool-group button {
-  padding: 8px 12px;
-  background: #21262d;
-  border: 1px solid #30363d;
-  border-radius: 6px;
-  color: #c9d1d9;
-  cursor: pointer;
-  font-size: 13px;
+.annotator-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
-.tool-group button:hover, .tool-group button.active { background: #1f6feb; border-color: #1f6feb; color: white; }
-.tool-group button:disabled { opacity: 0.5; cursor: not-allowed; }
-.tool-group label { display: flex; align-items: center; gap: 5px; color: #8b949e; font-size: 13px; }
-.tool-group input[type="color"] { width: 30px; height: 30px; border: none; border-radius: 4px; cursor: pointer; }
-.tool-group input[type="range"] { width: 80px; }
-.upload-area {
-  background: #161b22;
-  border: 2px dashed #30363d;
+
+.page-header h1 {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+
+.page-header p {
+  color: var(--text-secondary);
+}
+
+.annotator-content {
+  display: grid;
+  grid-template-columns: 250px 1fr 250px;
+  gap: 24px;
+}
+
+@media (max-width: 1200px) {
+  .annotator-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+.toolbar-section {
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: fit-content;
+}
+
+.tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-group-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tool-buttons {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.tool-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: var(--bg-tertiary);
+  border: 2px solid transparent;
   border-radius: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.tool-btn:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.tool-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.tool-icon {
+  font-size: 20px;
+}
+
+.tool-name {
+  font-size: 11px;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.color-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.color-btn:hover {
+  transform: scale(1.1);
+}
+
+.color-btn.active {
+  border-color: white;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.width-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.width-value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+.tool-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-actions .btn {
+  width: 100%;
+}
+
+.canvas-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.canvas-wrapper {
+  position: relative;
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   min-height: 400px;
+  overflow: hidden;
+}
+
+canvas {
+  max-width: 100%;
+  cursor: crosshair;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.temp-canvas {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  pointer-events: none;
+}
+
+.canvas-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.layers-section {
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  padding: 20px;
+  height: fit-content;
+}
+
+.layers-header {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
 }
-.placeholder { text-align: center; color: #8b949e; }
-.placeholder .hint { margin: 8px 0 15px; }
-.upload-btn {
-  display: inline-block;
-  padding: 12px 24px;
-  background: #238636;
-  border-radius: 8px;
-  color: white;
+
+.layers-header h3 {
+  font-size: 16px;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.layers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 10px;
   cursor: pointer;
+  transition: all 0.3s ease;
 }
-.canvas-workspace { overflow: auto; background: #0d1117; border-radius: 8px; }
-.canvas-workspace canvas { display: block; cursor: crosshair; }
+
+.layer-item:hover {
+  background: var(--bg-primary);
+}
+
+.layer-item.visible {
+  opacity: 1;
+}
+
+.layer-item:not(.visible) {
+  opacity: 0.5;
+}
+
+.layer-icon {
+  font-size: 16px;
+}
+
+.layer-name {
+  flex: 1;
+  font-size: 13px;
+}
+
+.layer-delete {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.layer-delete:hover {
+  background: var(--accent);
+  color: white;
+}
+
+.empty-layers {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
 </style>
